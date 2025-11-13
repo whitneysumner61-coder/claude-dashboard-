@@ -1,0 +1,830 @@
+// Prisma Schema for AutoDeploy Pro
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ================================
+// USER & AUTHENTICATION
+// ================================
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  avatar    String?
+  password  String
+  role      UserRole @default(USER)
+
+  // Profile
+  company  String?
+  phone    String?
+  country  String?
+  timezone String   @default("UTC")
+
+  // Preferences
+  emailOptIn      Boolean @default(true)
+  marketingOptIn  Boolean @default(false)
+  language        String  @default("en")
+
+  // Metadata
+  metadata Json?
+
+  // Relations
+  products                Product[]
+  marketplaceIntegrations MarketplaceIntegration[]
+  webhookEndpoints        WebhookEndpoint[]
+  customers               Customer[]
+  apiKeys                 ApiKey[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  USER
+  VIEWER
+}
+
+model ApiKey {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  key         String   @unique
+  permissions String[] @default([])
+  lastUsedAt  DateTime?
+
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([key])
+  @@index([userId])
+  @@map("api_keys")
+}
+
+// ================================
+// PRODUCTS
+// ================================
+
+model Product {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  slug            String        @unique
+  description     String
+  longDescription String?       @db.Text
+  type            ProductType
+  status          ProductStatus @default(DRAFT)
+
+  // Pricing
+  price    Float
+  currency String @default("USD")
+
+  // Metadata
+  version  String
+  category String
+  tags     String[] @default([])
+
+  // Assets
+  imageUrl         String?
+  previewUrl       String?
+  downloadUrl      String?
+  documentationUrl String?
+
+  // Features
+  features          String[] @default([])
+  systemRequirements Json?
+
+  // Settings
+  inventory   String  @default("unlimited") // Store as string to support 'unlimited'
+  enableTrial Boolean @default(false)
+  trialDays   Int     @default(0)
+
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+
+  // Metadata
+  metadata Json?
+
+  // Relations
+  deployments      Deployment[]
+  licenses         License[]
+  purchases        Purchase[]
+  pricingConfig    PricingConfig?
+  analyticsEvents  AnalyticsEvent[]
+  supportTickets   SupportTicket[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  @@index([userId])
+  @@index([slug])
+  @@index([status])
+  @@map("products")
+}
+
+enum ProductType {
+  DIGITAL_DOWNLOAD
+  SOFTWARE_LICENSE
+  SUBSCRIPTION
+  COURSE
+  PLUGIN
+  THEME
+}
+
+enum ProductStatus {
+  DRAFT
+  PENDING
+  PUBLISHED
+  ARCHIVED
+}
+
+// ================================
+// DEPLOYMENTS
+// ================================
+
+model Deployment {
+  id        String           @id @default(cuid())
+  productId String
+  product   Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  marketplace          String
+  marketplaceProductId String?
+  status               DeploymentStatus @default(PENDING)
+  priority             DeploymentPriority @default(NORMAL)
+
+  // Configuration
+  config Json @default("{}")
+
+  // Progress
+  progress    Int    @default(0)
+  currentStep String?
+  steps       Json   @default("[]")
+
+  // Results
+  result Json?
+  error  Json?
+
+  // Timing
+  startedAt   DateTime?
+  completedAt DateTime?
+  duration    Int?      // in seconds
+
+  // Retry logic
+  retryCount Int @default(0)
+  maxRetries Int @default(3)
+
+  // Metadata
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@index([status])
+  @@index([marketplace])
+  @@map("deployments")
+}
+
+enum DeploymentStatus {
+  PENDING
+  VALIDATING
+  OPTIMIZING
+  DEPLOYING
+  VERIFYING
+  DEPLOYED
+  FAILED
+  PAUSED
+  ROLLED_BACK
+}
+
+enum DeploymentPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+// ================================
+// MARKETPLACE INTEGRATIONS
+// ================================
+
+model MarketplaceIntegration {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  marketplace     String
+  apiKey          String
+  apiSecret       String?
+  webhookSecret   String?
+  storeId         String?
+  storeName       String?
+  storeUrl        String?
+
+  // Status
+  connected         Boolean   @default(true)
+  lastSyncAt        DateTime?
+  lastHealthCheckAt DateTime?
+  healthy           Boolean   @default(true)
+
+  // Settings
+  settings Json @default("{}")
+
+  // Metadata
+  metadata Json?
+
+  // Relations
+  webhooks WebhookEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, marketplace])
+  @@index([userId])
+  @@map("marketplace_integrations")
+}
+
+// ================================
+// LICENSES
+// ================================
+
+model License {
+  id         String        @id @default(cuid())
+  key        String        @unique
+  productId  String
+  product    Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  // License details
+  tier   LicenseTier
+  status LicenseStatus @default(ACTIVE)
+
+  // Validity
+  issuedAt    DateTime
+  expiresAt   DateTime?
+  activatedAt DateTime?
+
+  // Activation limits
+  maxActivations  Int      @default(1)
+  activationCount Int      @default(0)
+  hardwareIds     String[] @default([])
+
+  // Features
+  features String[] @default([])
+
+  // Metadata
+  metadata Json?
+
+  // Tracking
+  lastValidatedAt DateTime?
+  lastUsedAt      DateTime?
+
+  // Relations
+  activations LicenseActivation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
+  @@index([productId])
+  @@index([customerId])
+  @@index([status])
+  @@map("licenses")
+}
+
+enum LicenseTier {
+  BASIC
+  PROFESSIONAL
+  ENTERPRISE
+  LIFETIME
+}
+
+enum LicenseStatus {
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  REVOKED
+  TRIAL
+}
+
+model LicenseActivation {
+  id         String   @id @default(cuid())
+  licenseId  String
+  license    License  @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+  hardwareId String
+
+  deviceName String?
+  ipAddress  String?
+  userAgent  String?
+
+  activatedAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+  isActive    Boolean  @default(true)
+
+  @@index([licenseId])
+  @@index([hardwareId])
+  @@map("license_activations")
+}
+
+// ================================
+// CUSTOMERS
+// ================================
+
+model Customer {
+  id       String         @id @default(cuid())
+  userId   String
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email    String
+  name     String?
+  company  String?
+
+  // Status
+  status CustomerStatus @default(ACTIVE)
+  tier   CustomerTier   @default(FREE)
+
+  // Profile
+  avatar   String?
+  phone    String?
+  country  String?
+  timezone String?
+
+  // Preferences
+  emailOptIn      Boolean @default(true)
+  marketingOptIn  Boolean @default(false)
+  language        String  @default("en")
+
+  // Metadata
+  metadata Json?
+  tags     String[] @default([])
+
+  // Analytics
+  lifetimeValue  Float    @default(0)
+  totalPurchases Int      @default(0)
+  lastPurchaseAt DateTime?
+  firstPurchaseAt DateTime?
+
+  // Relations
+  purchases      Purchase[]
+  licenses       License[]
+  supportTickets SupportTicket[]
+  onboarding     CustomerOnboarding[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, email])
+  @@index([userId])
+  @@index([email])
+  @@map("customers")
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+  CHURNED
+  BLOCKED
+}
+
+enum CustomerTier {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+model Purchase {
+  id         String  @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // Transaction details
+  amount              Float
+  currency            String
+  marketplace         String
+  marketplaceOrderId  String
+
+  // Payment
+  paymentMethod String?
+  paymentStatus PaymentStatus @default(PENDING)
+  refunded      Boolean       @default(false)
+  refundedAt    DateTime?
+  refundAmount  Float?
+
+  // Fulfillment
+  fulfilled   Boolean   @default(false)
+  fulfilledAt DateTime?
+  downloadUrl String?
+  licenseKey  String?
+
+  // Metadata
+  metadata  Json?
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([productId])
+  @@index([marketplaceOrderId])
+  @@map("purchases")
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+  DISPUTED
+}
+
+// ================================
+// CUSTOMER SUPPORT
+// ================================
+
+model SupportTicket {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  // Ticket details
+  subject     String
+  description String        @db.Text
+  status      TicketStatus  @default(OPEN)
+  priority    TicketPriority @default(NORMAL)
+  category    String
+
+  // Assignment
+  assignedTo String?
+
+  // Conversation
+  messages Json @default("[]")
+
+  // Metadata
+  tags     String[] @default([])
+  metadata Json?
+
+  // Resolution
+  resolvedAt         DateTime?
+  resolution         String?   @db.Text
+  satisfactionRating Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([productId])
+  @@index([status])
+  @@map("support_tickets")
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model CustomerOnboarding {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  productId  String
+
+  // Progress
+  completed   Boolean @default(false)
+  currentStep Int     @default(0)
+  totalSteps  Int
+
+  // Steps
+  steps Json @default("[]")
+
+  // Timing
+  startedAt      DateTime @default(now())
+  completedAt    DateTime?
+  lastActivityAt DateTime @default(now())
+
+  @@index([customerId])
+  @@map("customer_onboarding")
+}
+
+// ================================
+// WEBHOOKS
+// ================================
+
+model WebhookEndpoint {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Endpoint details
+  url         String
+  description String?
+
+  // Configuration
+  events  String[] @default([])
+  enabled Boolean  @default(true)
+
+  // Security
+  secret          String
+  signatureHeader String @default("X-Webhook-Signature")
+
+  // Retry policy
+  maxRetries Int @default(3)
+  retryDelay Int @default(60) // seconds
+  timeout    Int @default(30) // seconds
+
+  // Filters
+  filters Json?
+
+  // Status
+  lastDeliveryAt     DateTime?
+  lastDeliveryStatus String?
+  consecutiveFailures Int      @default(0)
+
+  // Metadata
+  metadata Json?
+
+  // Relations
+  deliveries WebhookDelivery[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookEvent {
+  id                       String                  @id @default(cuid())
+  marketplaceIntegrationId String?
+  integration              MarketplaceIntegration? @relation(fields: [marketplaceIntegrationId], references: [id], onDelete: SetNull)
+
+  type   String
+  source String
+
+  // Event data
+  data         Json
+  previousData Json?
+
+  // Metadata
+  timestamp  DateTime
+  apiVersion String   @default("1.0")
+
+  // Delivery
+  deliveryAttempts    Int       @default(0)
+  lastDeliveryAttempt DateTime?
+  delivered           Boolean   @default(false)
+  deliveredAt         DateTime?
+
+  // Relations
+  deliveries WebhookDelivery[]
+
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([source])
+  @@map("webhook_events")
+}
+
+model WebhookDelivery {
+  id         String          @id @default(cuid())
+  webhookId  String
+  webhook    WebhookEvent    @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  endpointId String
+  endpoint   WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  eventId    String
+
+  // Request
+  requestUrl     String
+  requestHeaders Json
+  requestBody    Json
+
+  // Response
+  responseStatus  Int?
+  responseHeaders Json?
+  responseBody    Json?
+
+  // Timing
+  duration      Int? // milliseconds
+  attemptNumber Int
+
+  // Status
+  success Boolean
+  error   String?
+
+  timestamp DateTime @default(now())
+
+  @@index([webhookId])
+  @@index([endpointId])
+  @@map("webhook_deliveries")
+}
+
+// ================================
+// PRICING
+// ================================
+
+model PricingConfig {
+  id        String          @id @default(cuid())
+  productId String          @unique
+  product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  strategy  PricingStrategy @default(FIXED)
+
+  // Base pricing
+  basePrice Float
+  currency  String  @default("USD")
+
+  // Configuration (stores all pricing settings as JSON)
+  config Json @default("{}")
+
+  // Relations
+  priceChanges PriceChange[]
+  experiments  PricingExperiment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("pricing_configs")
+}
+
+enum PricingStrategy {
+  FIXED
+  DYNAMIC
+  COMPETITIVE
+  PENETRATION
+  PREMIUM
+  VALUE_BASED
+}
+
+model PriceChange {
+  id              String        @id @default(cuid())
+  pricingConfigId String
+  pricingConfig   PricingConfig @relation(fields: [pricingConfigId], references: [id], onDelete: Cascade)
+
+  // Price change
+  oldPrice      Float
+  newPrice      Float
+  change        Float
+  changePercent Float
+
+  // Reason
+  reason    String
+  strategy  PricingStrategy?
+
+  // Impact
+  impactedSales   Int?
+  impactedRevenue Float?
+
+  // Metadata
+  appliedAt DateTime
+  appliedBy String?
+  automated Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([pricingConfigId])
+  @@map("price_changes")
+}
+
+model PricingExperiment {
+  id              String        @id @default(cuid())
+  pricingConfigId String
+  pricingConfig   PricingConfig @relation(fields: [pricingConfigId], references: [id], onDelete: Cascade)
+
+  // Experiment details
+  name        String
+  description String?
+
+  // Variants (stored as JSON)
+  control  Json
+  variants Json
+
+  // Allocation
+  trafficAllocation Json
+
+  // Goals
+  primaryMetric   String
+  successCriteria Float
+
+  // Status
+  status    String @default("draft")
+  startDate DateTime?
+  endDate   DateTime?
+
+  // Results
+  results Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pricingConfigId])
+  @@map("pricing_experiments")
+}
+
+model Discount {
+  id    String @id @default(cuid())
+  type  String
+  value Float
+
+  // Conditions
+  minPurchase Int?
+  maxUses     Int?
+  usedCount   Int      @default(0)
+
+  // Validity
+  startDate DateTime?
+  endDate   DateTime?
+
+  // Targeting
+  applicableProducts  String[] @default([])
+  applicableCustomers String[] @default([])
+  applicableRegions   String[] @default([])
+
+  // Code
+  code String? @unique
+
+  // Status
+  enabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([code])
+  @@map("discounts")
+}
+
+// ================================
+// ANALYTICS
+// ================================
+
+model AnalyticsEvent {
+  id         String   @id @default(cuid())
+  type       String
+  userId     String?
+  customerId String?
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  // Event details
+  name       String
+  properties Json   @default("{}")
+
+  // Context
+  timestamp DateTime @default(now())
+  sessionId String?
+  ipAddress String?
+  userAgent String?
+
+  // Metadata
+  metadata Json?
+
+  @@index([type])
+  @@index([userId])
+  @@index([customerId])
+  @@index([productId])
+  @@index([timestamp])
+  @@map("analytics_events")
+}
+
+// ================================
+// SYSTEM
+// ================================
+
+model SystemHealth {
+  id        String   @id @default(cuid())
+  status    String
+  timestamp DateTime @default(now())
+  services  Json
+  version   String
+  uptime    Int      // seconds
+
+  @@map("system_health")
+}

@@ -1,0 +1,330 @@
+// Prisma Schema for AutoFlow Commander
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String                  @id @default(uuid())
+  email             String                  @unique
+  name              String
+  passwordHash      String
+  role              UserRole                @default(USER)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  repositories      RepositoryCollaborator[]
+  commits           Commit[]
+  executions        Execution[]
+  activities        Activity[]
+  sessions          ClaudeSession[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  USER
+  VIEWER
+}
+
+model Repository {
+  id                String                  @id @default(uuid())
+  name              String
+  description       String?
+  status            RepositoryStatus        @default(ACTIVE)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  prompts           AutomationPrompt[]
+  branches          Branch[]
+  collaborators     RepositoryCollaborator[]
+  executions        Execution[]
+  activities        Activity[]
+  tags              Tag[]
+
+  @@map("repositories")
+}
+
+enum RepositoryStatus {
+  ACTIVE
+  ARCHIVED
+  DRAFT
+}
+
+model RepositoryCollaborator {
+  id                String              @id @default(uuid())
+  userId            String
+  repositoryId      String
+  role              CollaboratorRole    @default(VIEWER)
+  createdAt         DateTime            @default(now())
+
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repository        Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, repositoryId])
+  @@map("repository_collaborators")
+}
+
+enum CollaboratorRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model Branch {
+  id                String              @id @default(uuid())
+  name              String
+  repositoryId      String
+  isDefault         Boolean             @default(false)
+  headCommitId      String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  repository        Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  commits           Commit[]
+
+  @@unique([repositoryId, name])
+  @@map("branches")
+}
+
+model Commit {
+  id                String              @id @default(uuid())
+  message           String
+  branchId          String
+  authorId          String
+  parentCommitId    String?
+  createdAt         DateTime            @default(now())
+
+  branch            Branch              @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  author            User                @relation(fields: [authorId], references: [id])
+  changes           CommitChange[]
+
+  @@map("commits")
+}
+
+model CommitChange {
+  id                String              @id @default(uuid())
+  commitId          String
+  promptId          String
+  changeType        ChangeType
+  diff              String              @db.Text
+  metadata          Json?
+
+  commit            Commit              @relation(fields: [commitId], references: [id], onDelete: Cascade)
+  prompt            AutomationPrompt    @relation(fields: [promptId], references: [id])
+
+  @@map("commit_changes")
+}
+
+enum ChangeType {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+model AutomationPrompt {
+  id                String              @id @default(uuid())
+  title             String
+  content           String              @db.Text
+  category          String
+  complexity        ComplexityLevel     @default(BASIC)
+  estimatedRuntime  Int                 // in seconds
+  version           String              @default("1.0.0")
+  repositoryId      String
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  executionCount    Int                 @default(0)
+  successRate       Float               @default(0)
+
+  repository        Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  dependencies      PromptDependency[]  @relation("PromptDependencies")
+  dependents        PromptDependency[]  @relation("DependentPrompts")
+  resources         ResourceRequirement[]
+  executions        Execution[]
+  commitChanges     CommitChange[]
+
+  @@map("automation_prompts")
+}
+
+enum ComplexityLevel {
+  BASIC
+  INTERMEDIATE
+  ADVANCED
+  ENTERPRISE
+}
+
+model PromptDependency {
+  id                String              @id @default(uuid())
+  promptId          String
+  dependencyId      String
+
+  prompt            AutomationPrompt    @relation("PromptDependencies", fields: [promptId], references: [id], onDelete: Cascade)
+  dependency        AutomationPrompt    @relation("DependentPrompts", fields: [dependencyId], references: [id], onDelete: Cascade)
+
+  @@unique([promptId, dependencyId])
+  @@map("prompt_dependencies")
+}
+
+model ResourceRequirement {
+  id                String              @id @default(uuid())
+  promptId          String
+  cpu               Float               // CPU cores
+  memory            Int                 // MB
+  disk              Int                 // MB
+  timeout           Int                 // seconds
+
+  prompt            AutomationPrompt    @relation(fields: [promptId], references: [id], onDelete: Cascade)
+
+  @@map("resource_requirements")
+}
+
+model Execution {
+  id                String              @id @default(uuid())
+  promptId          String
+  repositoryId      String
+  userId            String
+  status            ExecutionStatus     @default(QUEUED)
+  progress          Float               @default(0)
+  startTime         DateTime            @default(now())
+  endTime           DateTime?
+  output            Json?
+  errorMessage      String?             @db.Text
+
+  prompt            AutomationPrompt    @relation(fields: [promptId], references: [id])
+  repository        Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  user              User                @relation(fields: [userId], references: [id])
+  logs              ExecutionLog[]
+  resourceUsage     ResourceUsage[]
+
+  @@map("executions")
+}
+
+enum ExecutionStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model ExecutionLog {
+  id                String              @id @default(uuid())
+  executionId       String
+  timestamp         DateTime            @default(now())
+  level             LogLevel
+  message           String              @db.Text
+  metadata          Json?
+
+  execution         Execution           @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@map("execution_logs")
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+model ResourceUsage {
+  id                String              @id @default(uuid())
+  executionId       String
+  timestamp         DateTime            @default(now())
+  cpu               Float
+  memory            Int
+  disk              Int
+
+  execution         Execution           @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@map("resource_usage")
+}
+
+model ClaudeSession {
+  id                String              @id @default(uuid())
+  userId            String
+  sessionId         String              @unique
+  status            SessionStatus       @default(DISCONNECTED)
+  startedAt         DateTime            @default(now())
+  endedAt           DateTime?
+
+  user              User                @relation(fields: [userId], references: [id])
+  messages          ClaudeMessage[]
+
+  @@map("claude_sessions")
+}
+
+enum SessionStatus {
+  CONNECTED
+  DISCONNECTED
+  CONNECTING
+}
+
+model ClaudeMessage {
+  id                String              @id @default(uuid())
+  sessionId         String
+  sender            MessageSender
+  content           String              @db.Text
+  timestamp         DateTime            @default(now())
+  metadata          Json?
+
+  session           ClaudeSession       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("claude_messages")
+}
+
+enum MessageSender {
+  USER
+  CLAUDE
+  SYSTEM
+}
+
+model Activity {
+  id                String              @id @default(uuid())
+  repositoryId      String
+  userId            String
+  activityType      ActivityType
+  description       String
+  metadata          Json?
+  timestamp         DateTime            @default(now())
+
+  repository        Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  user              User                @relation(fields: [userId], references: [id])
+
+  @@map("activities")
+}
+
+enum ActivityType {
+  REPOSITORY_CREATED
+  REPOSITORY_UPDATED
+  PROMPT_CREATED
+  PROMPT_UPDATED
+  PROMPT_DELETED
+  EXECUTION_STARTED
+  EXECUTION_COMPLETED
+  EXECUTION_FAILED
+  BRANCH_CREATED
+  BRANCH_MERGED
+  COMMIT_CREATED
+  COLLABORATOR_ADDED
+  COLLABORATOR_REMOVED
+}
+
+model Tag {
+  id                String              @id @default(uuid())
+  name              String
+  repositoryId      String
+  commitId          String
+  createdAt         DateTime            @default(now())
+
+  repository        Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([repositoryId, name])
+  @@map("tags")
+}

@@ -1,0 +1,23 @@
+# Dockerfile for WebSocket Server
+
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json package-lock.json* ./
+
+# Install dependencies
+RUN npm ci --only=production
+
+# Copy application code
+COPY . .
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Expose WebSocket port
+EXPOSE 3001
+
+# Run migrations and start server
+CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx server/index.ts"]

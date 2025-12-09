@@ -1,0 +1,3 @@
+[submodule "mcpb"]
+	path = mcpb
+	url = https://github.com/anthropics/mcpb.git
